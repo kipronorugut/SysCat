@@ -1,0 +1,90 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta http-equiv="Content-Security-Policy" content="default-src 'self' http://localhost:* ws://localhost:* https://fonts.googleapis.com https://fonts.gstatic.com; script-src 'self' 'unsafe-inline' 'unsafe-eval'; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src 'self' https://fonts.gstatic.com;" />
+    <title>SysCat - M365 Admin Autopilot</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      href="https://fonts.googleapis.com/css2?family=Playfair+Display:wght@400;600;700&family=Cormorant+Garamond:wght@400;500;600&family=Lora:wght@400;500;600&display=swap"
+      rel="stylesheet"
+    />
+  </head>
+  <body>
+    <script>
+      // Polyfills (must run before any modules load)
+      if (typeof global === 'undefined') {
+        window.global = globalThis;
+      }
+      
+      // Minimal require polyfill for webpack-dev-server client code
+      // This is only needed in development when webpack-dev-server injects its client
+      if (typeof require === 'undefined') {
+        // Create a minimal EventEmitter implementation for webpack-dev-server
+        const EventEmitter = class {
+          constructor() {
+            this._events = {};
+          }
+          on(event, listener) {
+            if (!this._events[event]) this._events[event] = [];
+            this._events[event].push(listener);
+            return this;
+          }
+          emit(event, ...args) {
+            if (this._events[event]) {
+              this._events[event].forEach(listener => {
+                try {
+                  listener(...args);
+                } catch (e) {
+                  console.error('[EventEmitter] Error in listener:', e);
+                }
+              });
+            }
+            return this;
+          }
+          removeListener(event, listener) {
+            if (this._events[event]) {
+              this._events[event] = this._events[event].filter(l => l !== listener);
+            }
+            return this;
+          }
+          removeAllListeners(event) {
+            if (event) {
+              delete this._events[event];
+            } else {
+              this._events = {};
+            }
+            return this;
+          }
+        };
+        
+        // Store EventEmitter for later use
+        window.__events_polyfill__ = { EventEmitter };
+        
+        // Provide require function for webpack-dev-server client
+        window.require = function(module) {
+          if (module === 'events') {
+            // Return the events module with EventEmitter
+            return {
+              EventEmitter: EventEmitter,
+              default: EventEmitter
+            };
+          }
+          // For other modules, try webpack's require if available
+          if (window.__webpack_require__) {
+            try {
+              return window.__webpack_require__(module);
+            } catch (e) {
+              // Module not found in webpack
+            }
+          }
+          throw new Error('Cannot find module: ' + module);
+        };
+      }
+    </script>
+    <div id="root"></div>
+  </body>
+</html>
+
