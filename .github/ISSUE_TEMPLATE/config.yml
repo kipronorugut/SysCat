@@ -1,0 +1,9 @@
+blank_issues_enabled: false
+contact_links:
+  - name: 💬 GitHub Discussions
+    url: https://github.com/kipronorugut/SysCat/discussions
+    about: Ask questions, share ideas, and get help from the community
+  - name: 📖 Documentation
+    url: https://github.com/kipronorugut/SysCat#readme
+    about: Check the README and documentation for answers
+
