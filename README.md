@@ -152,7 +152,26 @@ MIT License - see [LICENSE](LICENSE) for details.
 
 ## Screenshots
 
-> _Coming soon - screenshots of the beautiful UI!_
+### 🎯 Dashboard Overview
+![Dashboard](https://via.placeholder.com/800x450/0F172A/EA580C?text=SysCat+Dashboard)
+*Main dashboard showing tenant statistics, safe fix recommendations, and activity feed*
+
+### 🔧 Setup Wizard
+![Setup Wizard](https://via.placeholder.com/800x450/0F172A/EA580C?text=Setup+Wizard)
+*Easy 3-step setup process: Connect tenant → Scan → Fix*
+
+### 📊 Tenant Statistics
+![Tenant Stats](https://via.placeholder.com/800x450/0F172A/EA580C?text=Tenant+Statistics)
+*Real-time tenant overview with user counts, license usage, and security metrics*
+
+### 🛠️ Safe Fix Panel
+![Safe Fix Panel](https://via.placeholder.com/800x450/0F172A/EA580C?text=Safe+Fix+Panel)
+*One-click automation to reclaim licenses and fix common issues*
+
+> **Note:** Screenshots are placeholders. Replace with actual UI screenshots once available.
+
+### 🎬 Demo Video
+> _Coming soon - animated GIF showing SysCat in action!_
 
 ## Roadmap
 
