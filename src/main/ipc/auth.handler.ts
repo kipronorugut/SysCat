@@ -1,6 +1,6 @@
-import { IpcMain } from 'electron';
+import { IpcMain, BrowserWindow } from 'electron';
 import log from 'electron-log';
-import { authService, AuthConfig } from '../services/auth.service';
+import { authService, AuthConfig, REQUIRED_SCOPES } from '../services/auth.service';
 
 export function registerAuthHandlers(ipcMain: IpcMain): void {
   log.info('[IPC] Registering auth handlers');
@@ -21,17 +21,64 @@ export function registerAuthHandlers(ipcMain: IpcMain): void {
     return authService.getStatus();
   });
 
-  ipcMain.handle('auth:login-device-code', async (_event) => {
+  /**
+   * Interactive SSO login - opens Microsoft login page
+   * Verifies user has Global Admin or Global Reader permissions
+   */
+  ipcMain.handle('auth:login-sso', async (event) => {
+    log.info('[IPC] auth:login-sso');
+
+    try {
+      // Get the main window for parent reference
+      const mainWindow = BrowserWindow.fromWebContents(event.sender);
+      
+      // Request all required permissions during authentication
+      log.info('[IPC] Requesting scopes:', REQUIRED_SCOPES);
+      const { hasRequiredPermissions, userRoles } = await authService.loginWithSSO(
+        REQUIRED_SCOPES,
+        mainWindow || undefined
+      );
+
+      if (!hasRequiredPermissions) {
+        throw new Error(`User does not have required permissions. Required: Global Administrator or Global Reader. Current roles: ${userRoles.join(', ') || 'None'}`);
+      }
+
+      return {
+        status: authService.getStatus(),
+        userRoles,
+        message: `Authenticated successfully as ${userRoles.join(' or ')}`,
+      };
+    } catch (error: any) {
+      log.error('[IPC] auth:login-sso error', error);
+      throw error;
+    }
+  });
+
+  /**
+   * Device code login - fallback method
+   */
+  ipcMain.handle('auth:login-device-code', async (event) => {
     log.info('[IPC] auth:login-device-code');
 
     let codePayload: any = null;
+    const webContents = event.sender;
 
     try {
+      // Request all required permissions during authentication
+      log.info('[IPC] Requesting scopes:', REQUIRED_SCOPES);
       await authService.loginWithDeviceCode(
-        ['https://graph.microsoft.com/.default'],
+        REQUIRED_SCOPES,
         (info) => {
           codePayload = info;
           log.info('[IPC] Device code issued', { userCode: info.userCode });
+          
+          // Send device code immediately to renderer via IPC event
+          webContents.send('auth:device-code', {
+            userCode: info.userCode,
+            verificationUri: info.verificationUri,
+            message: info.message,
+          });
+          log.debug('[IPC] Device code sent to renderer via event');
         }
       );
 

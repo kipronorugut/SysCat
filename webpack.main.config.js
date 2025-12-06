@@ -26,7 +26,10 @@ module.exports = [
       __filename: false,
     },
     mode: process.env.NODE_ENV || 'development',
-    devtool: 'source-map',
+    devtool: process.env.NODE_ENV === 'production' ? 'source-map' : 'eval-source-map',
+    optimization: {
+      minimize: process.env.NODE_ENV === 'production',
+    },
   },
   // Preload script
   {
@@ -53,6 +56,9 @@ module.exports = [
       __filename: false,
     },
     mode: process.env.NODE_ENV || 'development',
-    devtool: 'source-map',
+    devtool: process.env.NODE_ENV === 'production' ? 'source-map' : 'eval-source-map',
+    optimization: {
+      minimize: process.env.NODE_ENV === 'production',
+    },
   },
 ];

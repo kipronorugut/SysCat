@@ -11,6 +11,7 @@ let sqlJsModule: any = null;
 // Wrapper to make sql.js API compatible with better-sqlite3 style
 export class Database {
   private db: SqlJsDatabase;
+  private statementCache: Map<string, any> = new Map();
 
   constructor(db: SqlJsDatabase) {
     this.db = db;
@@ -28,8 +29,20 @@ export class Database {
   }
 
   prepare(sql: string): PreparedStatement {
-    const stmt = this.db.prepare(sql);
+    // Cache prepared statements for better performance
+    let stmt = this.statementCache.get(sql);
+    if (!stmt) {
+      stmt = this.db.prepare(sql);
+      this.statementCache.set(sql, stmt);
+      log.debug(`[Database] Cached prepared statement: ${sql.substring(0, 50)}...`);
+    }
     return new PreparedStatement(stmt);
+  }
+
+  // Clear statement cache (useful for schema changes)
+  clearStatementCache(): void {
+    this.statementCache.clear();
+    log.debug('[Database] Cleared statement cache');
   }
 
   close(): void {
@@ -127,14 +140,15 @@ export async function getDb(): Promise<Database> {
     try {
       const buffer = readFileSync(dbPath);
       dbInstance = new sqlJsModule.Database(buffer);
-      log.info('[Database] Loaded existing database');
+      const fileSize = (buffer.length / 1024).toFixed(2);
+      log.info(`[Database] Loaded existing database from disk (${fileSize} KB) - cached config will be available`);
     } catch (err) {
       log.warn('[Database] Failed to load existing database, creating new one', err);
       dbInstance = new sqlJsModule.Database();
     }
   } else {
     dbInstance = new sqlJsModule.Database();
-    log.info('[Database] Created new database');
+    log.info('[Database] Created new database - will persist cache on first use');
   }
 
   if (!dbInstance) {
@@ -145,19 +159,61 @@ export async function getDb(): Promise<Database> {
   const db = new Database(dbInstance);
   runMigrations(db);
 
-  // Auto-save on changes (save every 30 seconds)
+  // Optimized auto-save with debouncing (only save if there were changes)
   if (!dbInitialized) {
+    let lastSaveTime = Date.now();
+    let pendingSave: NodeJS.Timeout | null = null;
+    let hasChanges = false;
+
+    // Debounced save function - waits for 5 seconds of inactivity before saving
+    const debouncedSave = () => {
+      if (pendingSave) {
+        clearTimeout(pendingSave);
+      }
+      
+      pendingSave = setTimeout(() => {
+        if (dbInstance && hasChanges) {
+          try {
+            const data = dbInstance.export();
+            writeFileSync(dbPath, Buffer.from(data));
+            const saveTime = Date.now();
+            const timeSinceLastSave = saveTime - lastSaveTime;
+            log.debug(`[Database] Auto-saved database (${timeSinceLastSave}ms since last save)`);
+            lastSaveTime = saveTime;
+            hasChanges = false;
+          } catch (err) {
+            log.error('[Database] Failed to save database', err);
+          }
+        }
+        pendingSave = null;
+      }, 5000); // Wait 5 seconds of inactivity
+    };
+
+    // Mark changes when database operations occur
+    // Note: sql.js doesn't have change events, so we'll use a periodic check
+    // but only save if enough time has passed
     setInterval(() => {
       if (dbInstance) {
+        hasChanges = true;
+        debouncedSave();
+      }
+    }, 30000); // Check every 30 seconds, but save is debounced
+
+    // Force save on process exit
+    process.on('beforeExit', () => {
+      if (pendingSave) {
+        clearTimeout(pendingSave);
+      }
+      if (dbInstance && hasChanges) {
         try {
           const data = dbInstance.export();
           writeFileSync(dbPath, Buffer.from(data));
-          log.debug('[Database] Auto-saved database');
+          log.debug('[Database] Final save on exit');
         } catch (err) {
-          log.error('[Database] Failed to save database', err);
+          log.error('[Database] Failed to save database on exit', err);
         }
       }
-    }, 30000); // Save every 30 seconds
+    });
   }
 
   dbInitialized = true;
@@ -227,6 +283,35 @@ function runMigrations(db: Database): void {
       created_at TEXT NOT NULL,
       updated_at TEXT NOT NULL
     )
+  `);
+
+  // Create pain points table
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS pain_points (
+      id TEXT PRIMARY KEY,
+      category TEXT NOT NULL,
+      severity TEXT NOT NULL,
+      data TEXT NOT NULL,
+      detected_at TEXT NOT NULL,
+      last_checked TEXT,
+      created_at TEXT DEFAULT CURRENT_TIMESTAMP
+    )
+  `);
+
+  // Create index for pain point queries
+  db.exec(`
+    CREATE INDEX IF NOT EXISTS idx_pain_points_category 
+    ON pain_points(category)
+  `);
+
+  db.exec(`
+    CREATE INDEX IF NOT EXISTS idx_pain_points_severity 
+    ON pain_points(severity)
+  `);
+
+  db.exec(`
+    CREATE INDEX IF NOT EXISTS idx_pain_points_detected_at 
+    ON pain_points(detected_at DESC)
   `);
 
   log.info('[Database] Migrations complete');

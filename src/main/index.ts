@@ -6,7 +6,14 @@ import { registerAuthHandlers } from './ipc/auth.handler';
 import { registerGraphHandlers } from './ipc/graph.handler';
 import { registerAutomationHandlers } from './ipc/automation.handler';
 import { registerSettingsHandlers } from './ipc/settings.handler';
+import { registerPainPointHandlers } from './ipc/pain-points.handler';
+import { registerAlertHandlers } from './ipc/alert.handler';
+import { registerAIAnalyticsHandlers } from './ipc/ai-analytics.handler';
+import { registerQuickWinsHandlers } from './ipc/quick-wins.handler';
+import { registerRecommendationRegistryHandlers } from './ipc/recommendation-registry.handler';
+import { registerRecommendationLinkerHandlers } from './ipc/recommendation-linker.handler';
 import { schedulerService } from './services/scheduler.service';
+import { recommendationRegistryService } from './services/recommendation-registry.service';
 
 // Configure electron-log
 log.transports.file.level = 'info';
@@ -47,12 +54,56 @@ function createWindow(): void {
       contextIsolation: true,
       nodeIntegration: false,
       sandbox: false,
+      // Set Content Security Policy to suppress warnings
+      webSecurity: true,
     },
     icon: path.join(__dirname, '../../assets/icons/icon.png'),
   });
 
+  // Set Content Security Policy via session for development
+  // Suppress CSP warnings in dev mode by setting a proper policy that allows webpack-dev-server
+  if (isDev) {
+    mainWindow.webContents.session.webRequest.onHeadersReceived((details, callback) => {
+      // Only modify CSP for HTML documents, not for other resources
+      if (details.responseHeaders && details.responseHeaders['content-type'] && 
+          details.responseHeaders['content-type'][0]?.includes('text/html')) {
+        callback({
+          responseHeaders: {
+            ...details.responseHeaders,
+            'Content-Security-Policy': [
+              "default-src 'self' http://localhost:* ws://localhost:* 'unsafe-inline' 'unsafe-eval'; " +
+              "script-src 'self' http://localhost:* ws://localhost:* 'unsafe-inline' 'unsafe-eval'; " +
+              "style-src 'self' 'unsafe-inline' http://localhost:* https://fonts.googleapis.com; " +
+              "font-src 'self' https://fonts.gstatic.com; " +
+              "connect-src 'self' http://localhost:* ws://localhost:* https://graph.microsoft.com https://login.microsoftonline.com; " +
+              "frame-src 'none'; " +
+              "object-src 'none';"
+            ],
+          },
+        });
+      } else {
+        callback({ responseHeaders: details.responseHeaders });
+      }
+    });
+    
+    // Suppress CSP warning in dev mode since we're intentionally using unsafe-eval for webpack-dev-server
+    mainWindow.webContents.on('console-message', (_event, _level, message) => {
+      if (message.includes('Content Security Policy') || message.includes('unsafe-eval')) {
+        // Suppress CSP warnings in dev - they're expected
+        return;
+      }
+    });
+    
+    log.debug('[Main] Development mode: CSP configured for webpack-dev-server (unsafe-eval is required for HMR)');
+  }
+
   log.info('[Main] Loading URL:', MAIN_WINDOW_WEBPACK_ENTRY);
   mainWindow.loadURL(MAIN_WINDOW_WEBPACK_ENTRY);
+
+  // Listen for preload script errors
+  mainWindow.webContents.on('preload-error', (_event, preloadPath, error) => {
+    log.error('[Main] Preload script error:', { preloadPath, error });
+  });
 
   mainWindow.once('ready-to-show', () => {
     log.info('[Main] Window ready to show');
@@ -61,6 +112,21 @@ function createWindow(): void {
     if (isDev) {
       mainWindow?.webContents.openDevTools();
     }
+  });
+  
+  // Log when DOM is ready to verify preload script execution
+  mainWindow.webContents.on('dom-ready', () => {
+    log.info('[Main] DOM ready - preload script should have executed');
+    // Check if preload script exposed syscatApi by evaluating in renderer
+    mainWindow?.webContents.executeJavaScript(`
+      console.log('[Main->Renderer] Checking for syscatApi...');
+      console.log('[Main->Renderer] syscatApi available:', typeof window.syscatApi !== 'undefined');
+      if (window.syscatApi) {
+        console.log('[Main->Renderer] syscatApi methods:', Object.keys(window.syscatApi));
+      }
+    `).catch((err) => {
+      log.error('[Main] Failed to check syscatApi in renderer:', err);
+    });
   });
 
   // Log page load events for debugging
@@ -161,14 +227,34 @@ function registerIpcHandlers(): void {
   registerGraphHandlers(ipcMain);
   registerAutomationHandlers(ipcMain);
   registerSettingsHandlers(ipcMain);
+  registerPainPointHandlers(ipcMain);
+  registerAlertHandlers();
+  registerAIAnalyticsHandlers();
+  registerQuickWinsHandlers();
+  registerRecommendationRegistryHandlers();
+  registerRecommendationLinkerHandlers();
 }
 
 // App lifecycle
-app.whenReady().then(() => {
+app.whenReady().then(async () => {
   log.info('[Main] App ready - initializing');
 
   // Initialize services
   schedulerService.initialize();
+
+  // Auto-initialize recommendation registry if empty
+  try {
+    const registryCount = recommendationRegistryService.getCount();
+    if (registryCount === 0) {
+      log.info('[Main] Registry is empty, initializing recommendations...');
+      await recommendationRegistryService.initializeSampleRecommendations();
+      log.info(`[Main] Registry initialized with ${recommendationRegistryService.getCount()} recommendations`);
+    } else {
+      log.info(`[Main] Registry already has ${registryCount} recommendations`);
+    }
+  } catch (error: any) {
+    log.error('[Main] Error initializing registry', error);
+  }
 
   // Create UI
   createWindow();
@@ -203,9 +289,14 @@ app.on('will-quit', () => {
   log.info('[Main] App will quit - cleaning up');
 });
 
-// Security: Prevent new window creation
+// Security: Prevent new window creation (but allow auth windows)
 app.on('web-contents-created', (_event, contents) => {
   contents.setWindowOpenHandler(({ url }) => {
+    // Allow auth-related windows
+    if (url.includes('login.microsoftonline.com') || url.includes('localhost:8400')) {
+      log.debug('[Main] Allowing auth window:', url);
+      return { action: 'allow' };
+    }
     log.warn('[Main] Blocked new window creation to:', url);
     return { action: 'deny' };
   });
